@@ -1,5 +1,9 @@
 import merge from 'lodash/merge';
+// import { initial } from 'lodash';
 import translations from '../assets/translations';
+import union from '@turf/union';
+import { featureCollection, dissolve, polygon } from '@turf/turf';
+
 
 const Map = L.Class.extend({
   initialize(map) {
@@ -8,6 +12,7 @@ const Map = L.Class.extend({
     this.Toolbar = new L.PM.Toolbar(map);
 
     this._globalRemovalMode = false;
+    this._globalSelectionMode = false;
   },
   setLang(lang = 'en', t, fallback = 'en') {
     if (t) {
@@ -99,7 +104,7 @@ const Map = L.Class.extend({
 
     // toogle the button in the toolbar if this is called programatically
     this.Toolbar.toggleButton('dragMode', this._globalDragMode);
-    
+
     this._fireDragModeEvent(true);
   },
   disableGlobalDragMode() {
@@ -226,6 +231,10 @@ const Map = L.Class.extend({
       layer.pm.enable(options);
     });
 
+    layers.forEach(layer => {
+      layer.pm.associateCommonMarkersFromOtherLayers();
+    });
+
     // handle layers that are added while in removal  xmode
     this.map.on('layeradd', this.layerAddHandler, this);
 
@@ -270,6 +279,79 @@ const Map = L.Class.extend({
       this.enableGlobalEditMode(options);
     }
   },
+  toggleGlobalSelectionMode() {
+    if (!this._globalSelectionMode) {
+      this._globalSelectionMode = true;
+      this.findLayers().forEach(layer => {
+        if (!layer.originalColor) {
+          // Difference between the way L.polygon and react-leaflet.GeoJSON seem to handle
+          // their color property (not sure about it for now)
+          if (layer.color) {
+            layer.originalColor = layer.color;
+          } else if (layer.options.style) {
+            layer.originalColor = layer.options.style.color;
+          }
+        }
+        layer.on('click', e => {
+          layer.setStyle({
+            color: layer._selected ? layer.originalColor : 'blue'
+          });
+          layer._selected = !layer._selected;
+        });
+      });
+    } else {
+      this._globalSelectionMode = false;
+      this.findLayers().forEach(layer => {
+        layer._selected = false;
+        if (layer.originalColor) {
+          layer.setStyle({
+            color: layer.originalColor
+          });
+        }
+        layer.off('click');
+      });
+    }
+  },
+
+  mergeSelectedPolygons() {
+    let layers = [];
+    this.findLayers().forEach(layer => {
+      if (layer._selected) {
+        layers.push(layer);
+      }
+    });
+
+    if (layers.length < 1) {
+      alert('You must select the polygons to merge!');
+      return;
+    }
+
+    let features = featureCollection(layers.map(l => polygon(l.toGeoJSON(15).geometry.coordinates)));
+    let dissolved = dissolve(features);
+
+    if (dissolved.features.length !== 1) {
+      alert('Merged polygons must be contiguous!');
+      return;
+    }
+
+    layers.forEach(layer => layer.remove());
+
+    let coords = dissolved.features[0].geometry.coordinates[0].map(([x, y]) => [y, x]);
+    let polyColor = layers[0].originalColor;
+    let poly = L.polygon(coords, {color: polyColor});
+    poly.addTo(this.map);
+
+    // Since we didn't leave the selection mode, make the new poly selectable right away (not sure about this)
+    poly.originalColor = polyColor;
+    poly.on('click', e => {
+      poly.setStyle({
+        color: poly._selected ? poly.originalColor : 'blue'
+      });
+      poly._selected = !poly._selected;
+    });
+
+  },
+
 });
 
 export default Map;

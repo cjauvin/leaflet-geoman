@@ -6,16 +6,19 @@ L.Control.PMButton = PMButton;
 
 const Toolbar = L.Class.extend({
   options: {
-    drawMarker: true,
-    drawRectangle: true,
+    drawMarker: false,
+    drawRectangle: false,
     drawPolyline: true,
     drawPolygon: true,
-    drawCircle: true,
-    drawCircleMarker: true,
+    drawCircle: false,
+    drawCircleMarker: false,
+    drawPolygonSplitter: true,
     editMode: true,
     dragMode: true,
     cutPolygon: true,
     removalMode: true,
+    selectionMode: true,
+    mergeSelectedPolygons: true,
     position: 'topleft',
   },
   initialize(map) {
@@ -82,10 +85,13 @@ const Toolbar = L.Class.extend({
         drawPolygon: 'control-icon leaflet-pm-icon-polygon',
         drawCircle: 'control-icon leaflet-pm-icon-circle',
         drawCircleMarker: 'control-icon leaflet-pm-icon-circle-marker',
+        drawPolygonSplitter: 'control-icon leaflet-pm-icon-cut',
         editMode: 'control-icon leaflet-pm-icon-edit',
         dragMode: 'control-icon leaflet-pm-icon-drag',
         cutPolygon: 'control-icon leaflet-pm-icon-cut',
         removalMode: 'control-icon leaflet-pm-icon-delete',
+        selectionMode: 'control-icon leaflet-pm-icon-select',
+        mergeSelectedPolygons: 'control-icon leaflet-pm-icon-merge',
       },
     };
 
@@ -254,6 +260,22 @@ const Toolbar = L.Class.extend({
       actions: ['cancel'],
     };
 
+    const drawPolygonSplitterButton = {
+      title: 'Split Polygon', //getTranslation('buttonTitles.drawRectButton'),
+      className: 'control-icon leaflet-pm-icon-cut',
+      jsClass: 'Rectangle',
+      onClick: () => {},
+      afterClick: () => {
+        // toggle drawing mode
+        this.map.pm.Draw.PolygonSplitter.toggle();
+      },
+      doToggle: true,
+      toggleStatus: false,
+      disableOtherButtons: true,
+      position: this.options.position,
+      actions: ['finish', 'removeLastVertex', 'cancel'],
+    };
+
     const editButton = {
       title: getTranslation('buttonTitles.editButton'),
       className: 'control-icon leaflet-pm-icon-edit',
@@ -320,16 +342,50 @@ const Toolbar = L.Class.extend({
       actions: ['cancel'],
     };
 
+    const selectButton = {
+      title: 'Select Polygons', // getTranslation('buttonTitles.deleteButton'),
+      className: 'control-icon leaflet-pm-icon-delete',
+      onClick: () => {},
+      afterClick: () => {
+        this.map.pm.toggleGlobalSelectionMode();
+      },
+      doToggle: true,
+      toggleStatus: false,
+      disableOtherButtons: true,
+      position: this.options.position,
+      tool: 'edit',
+      actions: ['cancel'],
+    };
+
+    const mergeButton = {
+      title: 'Merge Polygons', // getTranslation('buttonTitles.deleteButton'),
+      className: 'control-icon leaflet-pm-icon-delete',
+      onClick: () => {},
+      afterClick: () => {
+        // this.map.pm.toggleGlobalPolygonSelectionMode();
+        this.map.pm.mergeSelectedPolygons();
+      },
+      doToggle: false,
+      //toggleStatus: false,
+      disableOtherButtons: false,
+      position: this.options.position,
+      tool: 'edit',
+      actions: [],
+    };
+
     this._addButton('drawMarker', new L.Control.PMButton(drawMarkerButton));
     this._addButton('drawPolyline', new L.Control.PMButton(drawLineButton));
     this._addButton('drawRectangle', new L.Control.PMButton(drawRectButton));
     this._addButton('drawPolygon', new L.Control.PMButton(drawPolyButton));
     this._addButton('drawCircle', new L.Control.PMButton(drawCircleButton));
     this._addButton('drawCircleMarker', new L.Control.PMButton(drawCircleMarkerButton));
+    this._addButton('drawPolygonSplitter', new L.Control.PMButton(drawPolygonSplitterButton));
     this._addButton('editMode', new L.Control.PMButton(editButton));
     this._addButton('dragMode', new L.Control.PMButton(dragButton));
     this._addButton('cutPolygon', new L.Control.PMButton(cutButton));
     this._addButton('removalMode', new L.Control.PMButton(deleteButton));
+    this._addButton('selectionMode', new L.Control.PMButton(selectButton));
+    this._addButton('mergeSelectedPolygons', new L.Control.PMButton(mergeButton));
   },
 
   _showHideButtons() {

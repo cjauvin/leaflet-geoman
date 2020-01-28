@@ -19,6 +19,7 @@ import './Draw/L.PM.Draw.Rectangle';
 import './Draw/L.PM.Draw.Circle';
 import './Draw/L.PM.Draw.CircleMarker';
 import './Draw/L.PM.Draw.Cut';
+import './Draw/L.PM.Draw.PolygonSplitter';
 
 import Edit from './Edit/L.PM.Edit';
 import './Edit/L.PM.Edit.LayerGroup';

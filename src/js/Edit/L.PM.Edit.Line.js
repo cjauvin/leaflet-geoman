@@ -3,6 +3,7 @@ import get from 'lodash/get';
 import Edit from './L.PM.Edit';
 import Utils from '../L.PM.Utils';
 import { isEmptyDeep } from '../helpers';
+import * as turf from '@turf/turf';
 
 // Shit's getting complicated in here with Multipolygon Support. So here's a quick note about it:
 // Multipolygons with holes means lots of nested, multidimensional arrays.
@@ -16,6 +17,7 @@ Edit.Line = Edit.extend({
   initialize(layer) {
     this._layer = layer;
     this._enabled = false;
+    this._draggingEnabled = true;
   },
 
   toggleEdit(options) {
@@ -67,6 +69,10 @@ Edit.Line = Edit.extend({
       this.isRed = false;
       this._handleLayerStyle();
     }
+  },
+
+  setDragging(enabled) {
+    this._draggingEnabled = enabled;
   },
 
   _onLayerRemove(e) {
@@ -175,6 +181,7 @@ Edit.Line = Edit.extend({
   },
 
   _initMarkers() {
+
     const map = this._map;
     const coords = this._layer.getLatLngs();
 
@@ -212,9 +219,33 @@ Edit.Line = Edit.extend({
     // create markers
     this._markers = handleRing(coords);
 
+    //console.log(this._markers[0].length);
+
     if (this.options.snappable) {
       this._initSnappableMarkers();
     }
+  },
+
+  // must be called AFTER all the layers have made their _initMarkers call
+  associateCommonMarkersFromOtherLayers() {
+    (this._markers[0] || []).forEach(marker => {
+      marker._correspondingMarkers = this.findCorrespondingMarkersInOtherLayers(marker);
+    });
+
+  },
+
+  findCorrespondingMarkersInOtherLayers(marker) {
+    let layersAndMarkers = []; // pairs of [layer, marker]'s
+    this._map.pm.findLayers().forEach(layer => {
+      if (this._layer._leaflet_id !== layer._leaflet_id) {
+        const correspondingMarker = (layer.pm._markers[0] || []).find(m => m.getLatLng().equals(marker.getLatLng()));
+        if (correspondingMarker) {
+          layersAndMarkers.push([layer, correspondingMarker]);
+          //console.log(correspondingMarker.getLatLng());
+        }
+      }
+    });
+    return layersAndMarkers;
   },
 
   // creates initial markers for coordinates
@@ -241,6 +272,7 @@ Edit.Line = Edit.extend({
 
   // creates the middle markes between coordinates
   _createMiddleMarker(leftM, rightM) {
+
     // cancel if there are no two markers
     if (!leftM || !rightM) {
       return false;
@@ -253,6 +285,7 @@ Edit.Line = Edit.extend({
     );
 
     const middleMarker = this._createMarker(latlng);
+
     const middleIcon = L.divIcon({
       className: 'marker-icon marker-icon-middle',
     });
@@ -262,6 +295,46 @@ Edit.Line = Edit.extend({
     leftM._middleMarkerNext = middleMarker;
     rightM._middleMarkerPrev = middleMarker;
 
+    const updateOtherLayers = (ll) => {
+      // Search with layer with whom the middle marker should be shared
+      this._map.pm.findLayers().forEach(layer => {
+        let pt = turf.point([middleMarker._latlng.lng, middleMarker._latlng.lat]);
+        let line = turf.polygonToLine(layer.toGeoJSON());
+        let d = turf.pointToLineDistance(pt, line);
+        if (d < 0.0001 && layer._leaflet_id != this._layer._leaflet_id) {
+          console.log(layer._leaflet_id, d);
+
+          // find other layer's corresponding leftM and rightM (note that they are inverted)
+          let otherLayerRightM = layer.pm._markers[0].find(m => leftM.getLatLng().equals(m.getLatLng()));
+          let otherLayerLeftM = layer.pm._markers[0].find(m => rightM.getLatLng().equals(m.getLatLng()));
+          const otherLayerMiddleMarker = layer.pm._createMarker(ll);
+
+          // console.log(otherLayerMiddleMarker);
+
+          // const middleIcon = L.divIcon({
+          //   className: 'marker-icon marker-icon-middle',
+          // });
+          // middleMarker.setIcon(middleIcon);
+
+          // save reference to this middle markers on the neighboor regular markers
+          layer.pm._markerGroup.removeLayer(otherLayerLeftM._middleMarkerNext);
+          // layer.pm._markerGroup.removeLayer(otherLayerRightM._middleMarkerNext);
+
+          otherLayerLeftM._middleMarkerNext = otherLayerMiddleMarker;
+          otherLayerRightM._middleMarkerPrev = otherLayerMiddleMarker;
+
+          layer.pm._addMarker(otherLayerMiddleMarker, otherLayerLeftM, otherLayerRightM);
+
+          layer.pm.associateCommonMarkersFromOtherLayers();
+
+          // console.log('other layer:', layer.pm._markers[0].length, layer._latlngs[0].length);
+          // console.log('this layer:', this._markers[0].length, this._layer._latlngs[0].length);
+
+        }
+      });
+      this.associateCommonMarkersFromOtherLayers();
+    };
+
     middleMarker.on('click', () => {
       // TODO: move the next two lines inside _addMarker() as soon as
       // https://github.com/Leaflet/Leaflet/issues/4484
@@ -270,8 +343,12 @@ Edit.Line = Edit.extend({
       middleMarker.setIcon(icon);
 
       this._addMarker(middleMarker, leftM, rightM);
+
+      updateOtherLayers(middleMarker._latlng);
+
     });
     middleMarker.on('movestart', () => {
+
       // TODO: This is a workaround. Remove the moveend listener and
       // callback as soon as this is fixed:
       // https://github.com/Leaflet/Leaflet/issues/4484
@@ -283,6 +360,9 @@ Edit.Line = Edit.extend({
       });
 
       this._addMarker(middleMarker, leftM, rightM);
+
+      updateOtherLayers(middleMarker._latlng);
+
     });
 
     return middleMarker;
@@ -293,6 +373,8 @@ Edit.Line = Edit.extend({
     // first, make this middlemarker a regular marker
     newM.off('movestart');
     newM.off('click');
+
+    //console.log('addMarker');
 
     // now, create the polygon coordinate point for that marker
     // and push into marker array
@@ -445,6 +527,15 @@ Edit.Line = Edit.extend({
       indexPath,
       // TODO: maybe add latlng as well?
     });
+
+    (marker._correspondingMarkers || []).forEach(
+      ([layer, correspondingMarker]) => {
+        layer.pm._removeMarker({target: correspondingMarker});
+        //layer.pm.associateCommonMarkersFromOtherLayers();
+      }
+    );
+    //this.associateCommonMarkersFromOtherLayers();
+
   },
   findDeepMarkerIndex(arr, marker) {
     // thanks for the function, Felix Heck
@@ -474,12 +565,12 @@ Edit.Line = Edit.extend({
 
     return returnVal;
   },
-  updatePolygonCoordsFromMarkerDrag(marker) {
+  updatePolygonCoordsFromMarkerDrag(marker, referenceMarker = null) {
     // update polygon coords
     const coords = this._layer.getLatLngs();
 
     // get marker latlng
-    const latlng = marker.getLatLng();
+    const latlng = referenceMarker ? referenceMarker.getLatLng() : marker.getLatLng();
 
     // get indexPath of Marker
     const { indexPath, index, parentPath } = this.findDeepMarkerIndex(
@@ -496,6 +587,12 @@ Edit.Line = Edit.extend({
   },
 
   _onMarkerDrag(e) {
+    if (!this._draggingEnabled) {
+      return;
+    }
+
+    // console.log('dragging..');
+
     // dragged marker
     const marker = e.target;
 
@@ -510,6 +607,26 @@ Edit.Line = Edit.extend({
     }
 
     this.updatePolygonCoordsFromMarkerDrag(marker);
+
+    this._updateMiddleMarkers(marker);
+
+    (marker._correspondingMarkers || []).forEach(
+      ([layer, correspondingMarker]) => {
+        layer.pm.updatePolygonCoordsFromMarkerDrag(correspondingMarker, marker);
+        layer.pm.setDragging(false);
+        correspondingMarker.setLatLng(marker.getLatLng());
+        layer.pm._updateMiddleMarkers(correspondingMarker);
+        layer.pm.setDragging(true);
+      }
+    );
+  },
+
+  _updateMiddleMarkers(marker) {
+
+    const { indexPath, index, parentPath } = this.findDeepMarkerIndex(
+      this._markers,
+      marker
+    );
 
     // the dragged markers neighbors
     const markerArr =
@@ -552,7 +669,12 @@ Edit.Line = Edit.extend({
   },
 
   _onMarkerDragEnd(e) {
+    if (!this._draggingEnabled) {
+      return;
+    }
+
     const marker = e.target;
+
     const { indexPath } = this.findDeepMarkerIndex(this._markers, marker);
 
     // if self intersection is not allowed but this edit caused a self intersection,
@@ -578,8 +700,14 @@ Edit.Line = Edit.extend({
     // fire edit event
     this._fireEdit();
   },
+
   _onMarkerDragStart(e) {
+    if (!this._draggingEnabled) {
+      return;
+    }
+
     const marker = e.target;
+
     const { indexPath } = this.findDeepMarkerIndex(this._markers, marker);
 
     this._layer.fire('pm:markerdragstart', {
